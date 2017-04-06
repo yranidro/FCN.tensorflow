@@ -15,7 +15,7 @@ tf.flags.DEFINE_string("data_dir", "Data_zoo/MIT_SceneParsing/", "path to datase
 tf.flags.DEFINE_float("learning_rate", "1e-4", "Learning rate for Adam Optimizer")
 tf.flags.DEFINE_string("model_dir", "Model_zoo/", "Path to vgg model mat")
 tf.flags.DEFINE_bool('debug', "False", "Debug mode: True/ False")
-tf.flags.DEFINE_string('mode', "test", "Mode train/ test/ visualize")
+tf.flags.DEFINE_string('mode', "train", "Mode train/ test/ visualize")
 
 MODEL_URL = 'http://www.vlfeat.org/matconvnet/models/beta16/imagenet-vgg-verydeep-19.mat'
 
@@ -46,6 +46,10 @@ def vgg_net(weights, image):
         kind = name[:4]
         if kind == 'conv':
             kernels, bias = weights[i][0][0][0][0]
+            if name[4] == '1' and name[6] == '1':
+                kernels_ =np.zeros(shape=(3,3,4,64), dtype=float)
+                kernels_[:,:,0:3,:] = kernels
+                kernels = kernels_
             # matconvnet: weights are [width, height, in_channels, out_channels]
             # tensorflow: weights are [height, width, in_channels, out_channels]
             kernels = utils.get_variable(np.transpose(kernels, (1, 0, 2, 3)), name=name + "_w")
@@ -126,7 +130,6 @@ def inference(image, keep_prob):
         conv_t3 = utils.conv2d_transpose_strided(fuse_2, W_t3, b_t3, output_shape=deconv_shape3, stride=8)
 
         annotation_pred = tf.argmax(conv_t3, dimension=3, name="prediction")
-        print("type={} size={}".format(type(annotation_pred), tf.shape(annotation_pred)))
 
     return tf.expand_dims(annotation_pred, dim=3), conv_t3
 
@@ -147,9 +150,9 @@ def main(argv=None):
     annotation = tf.placeholder(tf.int32, shape=[None, IMAGE_SIZE, IMAGE_SIZE, 1], name="annotation")
 
     pred_annotation, logits = inference(image, keep_probability)
-    # tf.summary.image("input_image", image, max_outputs=2)
-    # tf.summary.image("ground_truth", tf.cast(annotation, tf.uint8), max_outputs=2)
-    # tf.summary.image("pred_annotation", tf.cast(pred_annotation, tf.uint8), max_outputs=2)
+    tf.summary.image("input_image", image, max_outputs=2)
+    tf.summary.image("ground_truth", tf.cast(annotation, tf.uint8), max_outputs=2)
+    tf.summary.image("pred_annotation", tf.cast(pred_annotation, tf.uint8), max_outputs=2)
     loss = tf.reduce_mean((tf.nn.sparse_softmax_cross_entropy_with_logits(logits,
                                                                           tf.squeeze(annotation, squeeze_dims=[3]),
                                                                           name="entropy")))
@@ -162,7 +165,7 @@ def main(argv=None):
     train_op = train(loss, trainable_var)
 
     print("Setting up summary op...")
-    #summary_op = tf.summary.merge_all()
+    summary_op = tf.summary.merge_all()
 
     print("Setting up image reader...")
     train_records, valid_records = scene_parsing.read_dataset(FLAGS.data_dir)

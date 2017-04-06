@@ -120,7 +120,19 @@ def inference(image, keep_prob):
         fuse_2 = tf.add(conv_t2, image_net["pool3"], name="fuse_2")
 
         shape = tf.shape(image)
-        deconv_shape3 = tf.pack([shape[0], shape[1], shape[2], NUM_OF_CLASSESS])
+        #deconv_shape3 = tf.pack([shape[0], shape[1], shape[2], NUM_OF_CLASSESS])
+        deconv_shape3 = tf.stack([shape[0], shape[1], shape[2], NUM_OF_CLASSESS])
+        # print("{} {} {} {}".format(shape[0], shape[1], shape[2], NUM_OF_CLASSESS))
+        # deconv_shape3 = tf.TensorArray(dtype=tf.float64,size=4)
+        # deconv_shape3 = deconv_shape3.write(shape[0], shape[1], shape[2], NUM_OF_CLASSESS)
+        # deconv_shape3 = deconv_shape3.pack()
+        # deconv_shape3 = tf.TensorArray(dtype=tf.float64,size=4)
+        # deconv_shape3.write(0, shape[0])
+        # deconv_shape3.write(1, shape[1])
+        # deconv_shape3.write(2, shape[2])
+        # deconv_shape3.write(3, NUM_OF_CLASSESS)
+        # deconv_shape3 = deconv_shape3.pack()
+
         W_t3 = utils.weight_variable([16, 16, NUM_OF_CLASSESS, deconv_shape2[3].value], name="W_t3")
         b_t3 = utils.bias_variable([NUM_OF_CLASSESS], name="b_t3")
         conv_t3 = utils.conv2d_transpose_strided(fuse_2, W_t3, b_t3, output_shape=deconv_shape3, stride=8)
@@ -147,9 +159,9 @@ def main(argv=None):
     annotation = tf.placeholder(tf.int32, shape=[None, IMAGE_SIZE, IMAGE_SIZE, 1], name="annotation")
 
     pred_annotation, logits = inference(image, keep_probability)
-    # tf.summary.image("input_image", image, max_outputs=2)
-    # tf.summary.image("ground_truth", tf.cast(annotation, tf.uint8), max_outputs=2)
-    # tf.summary.image("pred_annotation", tf.cast(pred_annotation, tf.uint8), max_outputs=2)
+    tf.summary.image("input_image", image, max_outputs=2)
+    tf.summary.image("ground_truth", tf.cast(annotation, tf.uint8), max_outputs=2)
+    tf.summary.image("pred_annotation", tf.cast(pred_annotation, tf.uint8), max_outputs=2)
     loss = tf.reduce_mean((tf.nn.sparse_softmax_cross_entropy_with_logits(logits,
                                                                           tf.squeeze(annotation, squeeze_dims=[3]),
                                                                           name="entropy")))
@@ -162,7 +174,7 @@ def main(argv=None):
     train_op = train(loss, trainable_var)
 
     print("Setting up summary op...")
-    #summary_op = tf.summary.merge_all()
+    summary_op = tf.summary.merge_all()
 
     print("Setting up image reader...")
     train_records, valid_records = scene_parsing.read_dataset(FLAGS.data_dir)
