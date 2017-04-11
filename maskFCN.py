@@ -3,24 +3,24 @@ import tensorflow as tf
 import numpy as np
 
 import TensorflowUtils as utils
-import read_MITSceneParsingData as scene_parsing
+import read_COCOData as COCO
 import datetime
-import BatchDatsetReader as dataset
+import Batch4CDatasetReader as dataset
 from six.moves import xrange
 
 FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_integer("batch_size", "2", "batch size for training")
 tf.flags.DEFINE_string("logs_dir", "logs/", "path to logs directory")
-tf.flags.DEFINE_string("data_dir", "Data_zoo/MIT_SceneParsing/", "path to dataset")
+tf.flags.DEFINE_string("data_dir", "Data_COCO/", "path to dataset")
 tf.flags.DEFINE_float("learning_rate", "1e-4", "Learning rate for Adam Optimizer")
 tf.flags.DEFINE_string("model_dir", "Model_zoo/", "Path to vgg model mat")
 tf.flags.DEFINE_bool('debug', "False", "Debug mode: True/ False")
-tf.flags.DEFINE_string('mode', "train", "Mode train/ test/ visualize")
+tf.flags.DEFINE_string('mode', "visualize", "Mode train/ test/ visualize")
 
 MODEL_URL = 'http://www.vlfeat.org/matconvnet/models/beta16/imagenet-vgg-verydeep-19.mat'
 
 MAX_ITERATION = int(1e5 + 1)
-NUM_OF_CLASSESS = 151
+NUM_OF_CLASSESS = 2
 IMAGE_SIZE = 224
 
 
@@ -47,9 +47,9 @@ def vgg_net(weights, image):
         if kind == 'conv':
             kernels, bias = weights[i][0][0][0][0]
             if name[4] == '1' and name[6] == '1':
-                kernels_ =np.zeros(shape=(3,3,4,64), dtype=float)
-                kernels_[:,:,0:3,:] = kernels
-                kernels = kernels_
+                #kernel_mask = np.expand_dims(np.mean(kernels,axis=2),axis=2)
+                kernel_mask = np.zeros([3,3,1,64])
+                kernels = np.append(kernels, kernel_mask, axis=2)
             # matconvnet: weights are [width, height, in_channels, out_channels]
             # tensorflow: weights are [height, width, in_channels, out_channels]
             kernels = utils.get_variable(np.transpose(kernels, (1, 0, 2, 3)), name=name + "_w")
@@ -78,9 +78,11 @@ def inference(image, keep_prob):
 
     mean = model_data['normalization'][0][0][0]
     mean_pixel = np.mean(mean, axis=(0, 1))
+    mean_pixel = np.append(mean_pixel,[0]) #for mask channel
 
     weights = np.squeeze(model_data['layers'])
 
+    print("image.shape:{} mean.shape:{} mean_pixel.shape:{}".format(tf.shape(image), mean.shape, mean_pixel.shape))
     processed_image = utils.process_image(image, mean_pixel)
 
     with tf.variable_scope("inference"):
@@ -146,13 +148,13 @@ def train(loss_val, var_list):
 
 def main(argv=None):
     keep_probability = tf.placeholder(tf.float32, name="keep_probabilty")
-    image = tf.placeholder(tf.float32, shape=[None, IMAGE_SIZE, IMAGE_SIZE, 3], name="input_image")
+    image = tf.placeholder(tf.float32, shape=[None, IMAGE_SIZE, IMAGE_SIZE, 4], name="input_image")
     annotation = tf.placeholder(tf.int32, shape=[None, IMAGE_SIZE, IMAGE_SIZE, 1], name="annotation")
 
     pred_annotation, logits = inference(image, keep_probability)
-    tf.summary.image("input_image", image, max_outputs=2)
-    tf.summary.image("ground_truth", tf.cast(annotation, tf.uint8), max_outputs=2)
-    tf.summary.image("pred_annotation", tf.cast(pred_annotation, tf.uint8), max_outputs=2)
+    # tf.summary.image("input_image", image, max_outputs=2)
+    # tf.summary.image("ground_truth", tf.cast(annotation, tf.uint8), max_outputs=2)
+    # tf.summary.image("pred_annotation", tf.cast(pred_annotation, tf.uint8), max_outputs=2)
     loss = tf.reduce_mean((tf.nn.sparse_softmax_cross_entropy_with_logits(logits,
                                                                           tf.squeeze(annotation, squeeze_dims=[3]),
                                                                           name="entropy")))
@@ -165,10 +167,10 @@ def main(argv=None):
     train_op = train(loss, trainable_var)
 
     print("Setting up summary op...")
-    summary_op = tf.summary.merge_all()
+    #summary_op = tf.summary.merge_all()
 
     print("Setting up image reader...")
-    train_records, valid_records = scene_parsing.read_dataset(FLAGS.data_dir)
+    train_records, valid_records = COCO.read_dataset(FLAGS.data_dir)
     print(len(train_records))
     print(len(valid_records))
 
@@ -176,13 +178,13 @@ def main(argv=None):
     image_options = {'resize': True, 'resize_size': IMAGE_SIZE}
     if FLAGS.mode == 'train':
         train_dataset_reader = dataset.BatchDatset(train_records, image_options)
-    validation_dataset_reader = dataset.BatchDatset(valid_records, image_options)
+    validation_dataset_reader = dataset.BatchDatset(valid_records[0:10], image_options)
 
     sess = tf.Session()
 
     print("Setting up Saver...")
     saver = tf.train.Saver()
-    summary_writer = tf.summary.FileWriter(FLAGS.logs_dir, sess.graph)
+    #summary_writer = tf.summary.FileWriter(FLAGS.logs_dir, sess.graph)
 
     sess.run(tf.initialize_all_variables())
     ckpt = tf.train.get_checkpoint_state(FLAGS.logs_dir)
@@ -209,6 +211,16 @@ def main(argv=None):
                 print("%s ---> Validation_loss: %g" % (datetime.datetime.now(), valid_loss))
                 saver.save(sess, FLAGS.logs_dir + "model.ckpt", itr)
 
+                pred = sess.run(pred_annotation, feed_dict={image: valid_images, annotation: valid_annotations,
+                                                    keep_probability: 1.0})
+                valid_annotations = np.squeeze(valid_annotations, axis=3)
+                pred = np.squeeze(pred, axis=3)
+                for count in range(FLAGS.batch_size):
+                    utils.save_image(valid_images[count][:,:,0:3].astype(np.uint8), FLAGS.logs_dir, name="itr_" + str(itr) + "_inp_" + str(count))
+                    utils.save_image(valid_annotations[count].astype(np.uint8)*255, FLAGS.logs_dir, name="itr_" + str(itr) + "_gt_" + str(count))
+                    utils.save_image(pred[count].astype(np.uint8)*255, FLAGS.logs_dir, name="itr_" + str(itr) + "_pred_" + str(count))
+                    print("Saved image: %d" % count)
+
     elif FLAGS.mode == "visualize":
         valid_images, valid_annotations = validation_dataset_reader.get_random_batch(FLAGS.batch_size)
         pred = sess.run(pred_annotation, feed_dict={image: valid_images, annotation: valid_annotations,
@@ -217,9 +229,9 @@ def main(argv=None):
         pred = np.squeeze(pred, axis=3)
 
         for itr in range(FLAGS.batch_size):
-            utils.save_image(valid_images[itr].astype(np.uint8), FLAGS.logs_dir, name="inp_" + str(5+itr))
-            utils.save_image(valid_annotations[itr].astype(np.uint8), FLAGS.logs_dir, name="gt_" + str(5+itr))
-            utils.save_image(pred[itr].astype(np.uint8), FLAGS.logs_dir, name="pred_" + str(5+itr))
+            utils.save_image(valid_images[itr][:,:,0:3].astype(np.uint8), FLAGS.logs_dir, name="inp_" + str(5+itr))
+            utils.save_image(valid_annotations[itr].astype(np.uint8)*255, FLAGS.logs_dir, name="gt_" + str(5+itr))
+            utils.save_image(pred[itr].astype(np.uint8)*255, FLAGS.logs_dir, name="pred_" + str(5+itr))
             print("Saved image: %d" % itr)
 
 

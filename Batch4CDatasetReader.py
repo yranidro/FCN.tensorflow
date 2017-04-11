@@ -34,10 +34,19 @@ class BatchDatset:
         self.__channels = True
         self.images = np.array([self._transform(filename['image']) for filename in self.files])
         self.__channels = False
+        masks = np.array([np.expand_dims(self._transform(filename['mask']), axis=3) for filename in self.files])
+        masks[np.nonzero(masks)] = 255
+        print("masks.shape",masks.shape)
+        #self.images = np.append(self.images,np.expand_dims(masks, axis=3),axis=3) 
+        self.images = np.append(self.images, masks,axis=3) 
+        
+        self.__channels = False
         self.annotations = np.array(
             [np.expand_dims(self._transform(filename['annotation']), axis=3) for filename in self.files])
-        print (self.images.shape)
-        print (self.annotations.shape)
+        self.annotations[np.nonzero(self.annotations)] = 1
+        #print ("image example: {} {} {}".format(self.images[1,1,1,:], self.images[3,100,100,:], self.images[2,200,200,:]))
+        print ("self.images.shape: ", self.images.shape)
+        print ("self.annotations.shape: ", self.annotations.shape)
 
     def _transform(self, filename):
         image = misc.imread(filename)
@@ -51,8 +60,7 @@ class BatchDatset:
                                          [resize_size, resize_size], interp='nearest')
         else:
             resize_image = image
-        print("final image shape=",image.shape)
-        print("final type(image)= {} val type={} val={}".format(type(image),type(image[1,1]),image[1,1]))
+
         return np.array(resize_image)
 
     def get_records(self):
